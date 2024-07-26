@@ -16,10 +16,11 @@ rg37.add_liftover('gs://hail-common/references/grch37_to_grch38.over.chain.gz', 
 
 #Liftover locus
 
-weights_files = ["weights_plus_refs.csv"]
+weights_files = [weights_file_from_local]
+path_to_file = 'your/path/here'
 
 for file in weights_files:
-    weights_path = f'{my_bucket}/weights/hg19/data/{file}'
+    weights_path = f'{my_bucket}/path_to_file/{file}'
 
     weights = hl.import_table(weights_path, types={"rsid":"tstr",
                                                   "risk_allele":"tstr",
@@ -45,7 +46,7 @@ for file in weights_files:
     print(f'{file}: {n_lifted}/{n_orig} ({100*n_lifted/n_orig:.2f}%) sites successfully lifted over')
     print(f'lifted over weights file written to {weights_path.replace("hg19", "hg38")}')
 
-    
+
 
 
 
