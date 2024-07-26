@@ -1,0 +1,127 @@
+import numpy as np
+import pandas as pd
+import os
+import seaborn as sns
+
+#Read in test and train pcs
+train_pcs_df = pd.read_csv(os.path.join(bucket, "pcs", "train_set.pcs.csv"), index_col="research_id")
+test_pcs_df = pd.read_csv(os.path.join(bucket, "pcs", "test_set.pcs.csv"), index_col="research_id")
+
+#Fit data to model
+# function to extract pcs (+ 1 vec) and scores as numpy arrays
+def extract_pcs_and_scores(df, pc_indices):
+    pcs_np = df[[f'pc_{i}' for i in pc_indices]].to_numpy()
+    n_rows = pcs_np.shape[0]
+    pcs_np = np.append(np.repeat(1, n_rows).reshape(n_rows, 1), pcs_np, axis = 1)
+    scores = df['score'].to_numpy()
+    return pcs_np, scores
+
+def extract_standardized_pcs_and_scores(df, pc_indices):
+    pcs_np = df[[f'pc_{i}' for i in pc_indices]].to_numpy()
+    pcs_np = (pcs_np - np.mean(pcs_np, axis = 0))/np.std(pcs_np, axis = 0)
+    n_rows = pcs_np.shape[0]
+    pcs_np = np.append(np.repeat(1, n_rows).reshape(n_rows, 1), pcs_np, axis = 1)
+    scores = df['score'].to_numpy()
+    return pcs_np, scores
+
+# function to predict mean
+def f_mu(pcs, theta):
+    return np.dot(pcs, theta)
+
+# function to predict variance
+def f_var(pcs, theta):
+    return np.exp(np.dot(pcs, theta))
+
+# objective function
+# returns loss, gradient
+def obj(pcs, scores, theta):
+    split_index = pcs.shape[1]
+    
+    theta_mu = theta[:split_index]
+    theta_var = theta[split_index:]
+    mu = f_mu(pcs, theta_mu)
+    var = f_var(pcs, theta_var)
+    # loss is - log of normal distribution (with constant log sqrt(2pi) removed)
+    loss = np.sum(np.log(np.sqrt(var)) + (1/2)*(scores-mu)**2/var)
+    
+    #gradient of loss
+    mu_coeff = -(scores-mu)/var
+    sig_coeff = 1/2 - (1/2)*(scores-mu)**2/var
+    grad = np.append(np.sum(pcs * mu_coeff[:,np.newaxis], axis=0), np.sum(pcs * sig_coeff[:, np.newaxis], axis=0))
+    
+    return loss, grad
+
+def obj_L1(pcs, scores, theta, l):
+    unreg_loss, unreg_grad = obj(pcs, scores, theta)
+    loss = unreg_loss + l*np.sum(np.abs(theta))
+    grad = unreg_grad + l*np.sign(theta)
+    return loss, grad
+
+def adjust_scores(pcs, scores, theta):
+    split_index = pcs.shape[1]
+    
+    theta_mu = theta[:split_index]
+    theta_var = theta[split_index:]
+    mu = f_mu(pcs, theta_mu)
+    var = f_var(pcs, theta_var)
+    
+    adjusted_scores = (scores - mu)/np.sqrt(var)
+    return adjusted_scores
+
+sample_path = os.path.join(bucket, "cohorts", 'train_and_test_scores.csv')
+sample_path
+
+name_of_file_in_bucket = 'train_and_test_scores.csv'
+my_dataframe = pd.read_csv(name_of_file_in_bucket)
+
+from scipy.optimize import minimize
+
+conditions = ["prostate_cancer"]
+
+train_adjusted_scores_dfs = []
+test_adjusted_scores_dfs = []
+for condition in conditions:
+    # load scores
+    #scores = pd.read_csv(os.path.join(bucket, "cohorts/train_and_test_scores_new.csv"), index_col="s")
+    path = os.path.join(bucket, "cohorts", 'train_and_test_scores_jul25.csv')
+    #name_of_file_in_bucket = '/cohorts/train_and_test_scores_new.csv'
+    #os.system(f"gsutil cp '{my_bucket}{name_of_file_in_bucket}' .")
+    scores = pd.read_csv(path, index_col="s")
+    train_scores_and_pcs = scores.join(train_pcs_df.drop("ancestry_pred", axis=1), how="inner")
+    test_scores_and_pcs = scores.join(test_pcs_df.drop("ancestry_pred", axis=1), how="inner")
+    
+    n_pcs = 4
+    train_pcs, train_scores = extract_pcs_and_scores(train_scores_and_pcs, range(1, n_pcs + 1))
+    x0 = np.append(np.append(train_scores.mean(), np.repeat(0, n_pcs)), 
+                   np.append(np.log(train_scores.var()), np.repeat(0, n_pcs))
+                  )
+    res = minimize(lambda theta : obj(train_pcs, train_scores, theta), x0, method="BFGS", jac=True)
+    test_pcs, test_scores = extract_pcs_and_scores(test_scores_and_pcs, range(1, n_pcs + 1))
+    
+    adjusted_train_scores = adjust_scores(train_pcs, train_scores, res.x)
+    adjusted_test_scores = adjust_scores(test_pcs, test_scores, res.x)
+    
+    df_train_adjusted = train_scores_and_pcs.copy()[["ancestry_pred", "score"]]
+    df_train_adjusted["adjusted_score"] = adjusted_train_scores
+    df_train_adjusted["condition"] = condition
+    
+    df_test_adjusted = test_scores_and_pcs.copy()[["ancestry_pred", "score"]]
+    df_test_adjusted["adjusted_score"] = adjusted_test_scores
+    df_test_adjusted["condition"] = condition
+    
+    train_adjusted_scores_dfs.append(df_train_adjusted)
+    test_adjusted_scores_dfs.append(df_test_adjusted)
+    
+train_adjusted_scores = pd.concat(train_adjusted_scores_dfs)
+test_adjusted_scores = pd.concat(test_adjusted_scores_dfs)
+
+#Examine resulting distributions
+train_adjusted_scores = train_adjusted_scores.reset_index()
+train_adjusted_scores = train_adjusted_scores.rename(columns={'index':'person_id'})
+test_adjusted_scores = test_adjusted_scores.reset_index()
+test_adjusted_scores = test_adjusted_scores.rename(columns={'index':'person_id'})
+
+prs_df_full = train_adjusted_scores.merge(test_adjusted_scores,on=['person_id','ancestry_pred','score','adjusted_score','condition'], how='outer')
+prs_df_full  = prs_df_full .drop('condition', axis=1)
+
+#SAVE to bucket location for future use in LR or other modeling approach
