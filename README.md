@@ -14,3 +14,14 @@ The methodology presented in this project serves as an end-to-end solution for g
 - **Scalability**: Adaptable to various disease states beyond prostate cancer, with customizable input requirements.
 - **Genetic Risk Prediction**: Enhances understanding of genetic predisposition by identifying susceptibility loci and calculating associated risk scores.
 
+This analysis was adapted from a demonstration project in the All of Us Research Program v6, which outlined the development of polygenic risk scores using the program's data. The original project included several steps, such as:
+
+1. **Liftover Weights Files**: Transition weights files from hg19 to hg38.
+2. **Build Test and Train Cohorts**: Select ancestry-balanced train and test cohorts, subset to sites in weights files, and create new datasets. 
+3. **Repartition**: Reduce cohort dataset into partitions to improve efficiency in later steps.
+4. **Score Cohorts**: Score samples using Hail, based on [Hail's polygenic score calculation guide](https://hail.is/docs/0.2/guides/genetics.html#polygenic-score-calculation), with adjustments for multiallelic sites.
+5. **Fit Model**: Fit models and evaluate performance.
+
+This work acknowledges the All of Us Research Program for contributing to the methodology used in this analysis.
+
+
